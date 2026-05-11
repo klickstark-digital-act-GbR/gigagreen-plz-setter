@@ -652,6 +652,9 @@
                 showLoadingOverlay();
 
                 var data = Object.fromEntries(new FormData(e.target));
+                if (typeof data.gespraechsnotiz === 'string') {
+                    data.gespraechsnotiz = data.gespraechsnotiz.replace(/\r\n|\r|\n/g, ' ').replace(/\s+/g, ' ').trim();
+                }
                 console.log('Sende Daten:', data);
                 var ok = await sendFormData(data);
 
@@ -673,6 +676,34 @@
             });
         }
         
+        // Zeilenumbrüche im Notizenfeld unterbinden (bricht den Make-Flow)
+        var notesField = document.querySelector('textarea[name="gespraechsnotiz"]');
+        if (notesField) {
+            notesField.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                }
+            });
+            notesField.addEventListener('input', function() {
+                if (/\r|\n/.test(notesField.value)) {
+                    notesField.value = notesField.value.replace(/\r\n|\r|\n/g, ' ');
+                }
+            });
+            notesField.addEventListener('paste', function(e) {
+                e.preventDefault();
+                var text = (e.clipboardData || window.clipboardData).getData('text');
+                var clean = text.replace(/\r\n|\r|\n/g, ' ').replace(/\s+/g, ' ');
+                if (document.execCommand) {
+                    document.execCommand('insertText', false, clean);
+                } else {
+                    var start = notesField.selectionStart;
+                    var end = notesField.selectionEnd;
+                    notesField.value = notesField.value.slice(0, start) + clean + notesField.value.slice(end);
+                    notesField.selectionStart = notesField.selectionEnd = start + clean.length;
+                }
+            });
+        }
+
         // E-Mail-Hilfe und Stornierungsfunktion
         var emailHelp = document.getElementById('email-help');
         var emailTooltip = document.getElementById('email-tooltip');
