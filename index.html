@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GIGA.GREEN PLZ Setter Tool - Test</title>
+    <title>GIGA.GREEN PLZ Setter Tool - Test (v3 PLZ-Routing)</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
@@ -53,10 +53,19 @@
         <h1>GIGA.GREEN PLZ Setter Tool</h1>
         
         <div class="test-controls">
-            <h3>Test-Informationen</h3>
-            <p>PLZ Bereiche zum Testen:</p>
+            <h3>Test-Informationen (v3 PLZ-Routing, Stand: Aufteilung aktuell)</h3>
+            <p>PLZ-Fälle zum Testen (erste zwei Ziffern entscheiden):</p>
             <ul>
-                <li>041-042: Eddie Esche (Leipzig)</li>
+                <li>01067 (Dresden) → Ost: Daniel Budisky</li>
+                <li>04109 (Leipzig, führende Null) → Ost: Daniel Budisky</li>
+                <li>28195 (Bremen) → Daniel Budisky (vorbehaltlich Bestätigung GIGA.GREEN)</li>
+                <li>30159 (Hannover) → West 1: Christian Thiemann (ab 15.08.: Mitte/Boris)</li>
+                <li>60311 (Frankfurt) → West 2: Chirag Thakkar</li>
+                <li>80331 (München) → Süd: Fabian Hirschler</li>
+                <li>97070 (Würzburg) → Chirag Thakkar (ab 15.08. offen)</li>
+                <li>43210 / 62000 → existiert nicht → Warnhinweis, kein Kalender</li>
+                <li>1234 (4-stellig) → kein Kalender, keine Warnung</li>
+                <li>abc12 → Nicht-Ziffern werden automatisch entfernt</li>
             </ul>
         </div>
 

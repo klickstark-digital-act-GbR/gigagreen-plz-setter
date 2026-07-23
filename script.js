@@ -3,8 +3,8 @@
     // Alle Schlüssel sind entfernt. Dein Worker ist jetzt der Mittelsmann.
     const PROXY_URL = 'https://gigagreen-calendly-proxy.eddie-esche.workers.dev';
     
-    var aeMapping = {};
-    var bundeslaender = [];
+    var prefixMapping = {};
+    var currentPrefixShown = null;
 
     // Status‑Variablen
     var calendlyBooked = false;
@@ -23,7 +23,7 @@
 
     var MAX_RETRIES = 3;
 
-    console.log('🚀 Script gestartet - Version mit Proxy-Integration');
+    console.log('Script gestartet - v3 PLZ-Routing');
 
     // Styles dynamisch hinzufügen
     function addStyles() {
@@ -64,6 +64,10 @@
 
             /* AE-Info */
             '.ae-info { background:#f7fafc; border:1px solid #E5E7EB; border-radius:8px; padding:20px; font-size:18px; }',
+
+            /* PLZ-Warnung */
+            '.plz-warning { display:none; background:#fff8db; border:1px solid #fcd34d; border-radius:8px; padding:12px; color:#92400e; font-size:14px; margin-bottom:16px; }',
+            '.plz-warning.show { display:block; }',
 
             /* Erfolgsmeldung */
             '.success-message { background-color:#28a745; color:#fff; text-align:center; border-radius:12px; padding:15px; margin-top:10px; display:none; }',
@@ -127,17 +131,16 @@
         if (!container) return;
         container.innerHTML = `
             <div class="bundesland-section">
-                <h2 class="section-header">Terminbuchung (v2)</h2>
+                <h2 class="section-header">Terminbuchung (v3)</h2>
                 <h3 class="subsection-header">Schritt 1 – Calendly Termin buchen</h3>
                 <div class="bundesland-input-container">
-                    <select id="bundesland-select" class="ios-input required">
-                        <option value="">Bundesland wählen...</option>
-                    </select>
+                    <input type="text" id="plz-input" class="ios-input required" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="Postleitzahl des Standorts (5-stellig)*">
                 </div>
+                <div id="plz-warning" class="plz-warning"></div>
                 <div id="ae-result"></div>
             </div>
             <div id="calendly-container">
-                <div class="calendly-placeholder">Bitte wählen Sie zuerst ein Bundesland aus, um den Kalender zu laden.</div>
+                <div class="calendly-placeholder">Bitte geben Sie zuerst die Postleitzahl des Standorts ein, um den Kalender zu laden.</div>
             </div>
 
             <h3 class="subsection-header">Schritt 2 – Daten eintragen</h3>
@@ -178,7 +181,10 @@
                     <div class="form-grid">
                         <input type="text" class="ios-input required" name="strasse" placeholder="Standort Straße*" required>
                         <input type="text" class="ios-input required" name="hausnummer" placeholder="Standort Hausnummer*" required>
-                        <input type="text" class="ios-input required" name="plz" placeholder="Standort Postleitzahl*" required>
+                        <div>
+                            <input type="text" class="ios-input required" name="plz" placeholder="Standort Postleitzahl*" required>
+                            <div id="form-plz-hint" class="email-hint">Hinweis: Diese PLZ liegt in einem anderen Vertriebsgebiet als der geladene Kalender.</div>
+                        </div>
                         <input type="text" class="ios-input required" name="stadt" placeholder="Standort Stadt*" required>
                     </div>
                 </div>
@@ -299,20 +305,10 @@
         if (form) { form.style.display = 'none'; form.style.opacity = '0'; }
     }
 
-    // Bundesländer-Liste befüllen
-    function updateBundeslandSelect() {
-        var sel = document.getElementById('bundesland-select');
-        if (!sel) return;
-        sel.innerHTML = '<option value="">Bundesland wählen...</option>';
-        bundeslaender.forEach(function(bl) {
-            sel.innerHTML += '<option value="'+bl+'">'+bl+'</option>';
-        });
-    }
-
-    // AE-Daten aus Google Sheet laden (über den Proxy)
+    // PLZ-Konfiguration aus Google Sheet laden (über den Proxy)
+    // Erwartete Spalten: name, plz_prefixes (Komma-Liste zweistelliger Prefixe), calendly_link
     function loadAEData() {
         var xhr = new XMLHttpRequest();
-        // *** GEÄNDERT: Ruft jetzt den Proxy auf, der die CSV-Daten holt ***
         xhr.open('GET', PROXY_URL + '/api/sheet-csv', true);
         xhr.onreadystatechange = function() {
             if (xhr.readyState === 4 && xhr.status === 200) {
@@ -320,21 +316,29 @@
                     header: true,
                     skipEmptyLines: true,
                     complete: function(results) {
-                        aeMapping = {};
-                        bundeslaender = [];
+                        prefixMapping = {};
                         results.data.forEach(function(row) {
-                            if (row.Bundesland && row.name) {
-                                var bl = row.Bundesland.trim();
-                                aeMapping[bl] = {
-                                    name: row.name.trim(),
-                                    calendlyLink: row.calendly_link ? row.calendly_link.trim() : ''
-                                };
-                                if (bundeslaender.indexOf(bl) === -1) {
-                                    bundeslaender.push(bl);
+                            if (!row.name || !row.plz_prefixes) return;
+                            var info = {
+                                name: row.name.trim(),
+                                calendlyLink: row.calendly_link ? row.calendly_link.trim() : ''
+                            };
+                            row.plz_prefixes.split(',').forEach(function(token) {
+                                var prefix = token.trim();
+                                if (!/^\d{2}$/.test(prefix)) {
+                                    if (prefix) console.warn('Ungültiger PLZ-Prefix in Config ignoriert:', prefix);
+                                    return;
                                 }
-                            }
+                                if (prefixMapping[prefix]) {
+                                    console.warn('Doppelte Zuordnung für Prefix', prefix, '-', prefixMapping[prefix].name, 'behält Vorrang vor', info.name);
+                                    return;
+                                }
+                                prefixMapping[prefix] = info;
+                            });
                         });
-                        updateBundeslandSelect();
+                        console.log('PLZ-Konfiguration geladen:', Object.keys(prefixMapping).length, 'Prefixe');
+                        var plzInput = document.getElementById('plz-input');
+                        if (plzInput && plzInput.value) handlePlzChange(plzInput.value.replace(/\D/g, ''));
                     }
                 });
             }
@@ -342,13 +346,65 @@
         xhr.send();
     }
 
-    // UI aktualisieren nach Auswahl
-    function updateUI(ae, bundesland) {
+    // Reaktion auf PLZ-Eingabe (Schritt 1)
+    function handlePlzChange(digits) {
+        var warning = document.getElementById('plz-warning');
+        var resultDiv = document.getElementById('ae-result');
+        if (digits.length < 5) {
+            if (warning) warning.classList.remove('show');
+            if (digits.length === 0 && currentPrefixShown !== null) {
+                currentPrefixShown = null;
+                if (resultDiv) resultDiv.innerHTML = '';
+                updateUI(null, '');
+            }
+            return;
+        }
+        var prefix = digits.slice(0, 2);
+        var ae = prefixMapping[prefix];
+        syncPlzToForm(digits);
+        if (!ae) {
+            currentPrefixShown = null;
+            if (resultDiv) resultDiv.innerHTML = '';
+            updateUI(null, '');
+            if (warning) {
+                warning.innerHTML = 'Für die PLZ <strong>' + digits + '</strong> ist kein Vertriebsgebiet hinterlegt. Bitte prüfen Sie die Eingabe. Falls die PLZ korrekt ist, wenden Sie sich bitte an das Commercial-Ops-Team.';
+                warning.classList.add('show');
+            }
+            return;
+        }
+        if (warning) warning.classList.remove('show');
+        if (prefix !== currentPrefixShown) {
+            currentPrefixShown = prefix;
+            updateUI(ae, digits);
+        } else if (resultDiv) {
+            resultDiv.innerHTML = '<div class="ae-info"><p><strong>Account Executive für PLZ '+digits+':</strong> '+ae.name+'</p></div>';
+        }
+        checkFormPlzMismatch();
+    }
+
+    // Schritt-1-PLZ ins Formular übernehmen (solange der Caller sie dort nicht selbst geändert hat)
+    function syncPlzToForm(digits) {
+        var formPlz = document.querySelector('#contact-form input[name="plz"]');
+        if (formPlz && !formPlz.dataset.userEdited) formPlz.value = digits;
+    }
+
+    // Hinweis, wenn die Formular-PLZ in ein anderes Vertriebsgebiet zeigt als der geladene Kalender
+    function checkFormPlzMismatch() {
+        var hint = document.getElementById('form-plz-hint');
+        var formPlz = document.querySelector('#contact-form input[name="plz"]');
+        if (!hint || !formPlz) return;
+        var digits = formPlz.value.replace(/\D/g, '');
+        var mismatch = digits.length === 5 && currentPrefixShown && digits.slice(0, 2) !== currentPrefixShown;
+        hint.classList.toggle('show', Boolean(mismatch));
+    }
+
+    // UI aktualisieren nach PLZ-Auflösung
+    function updateUI(ae, plz) {
         var resultDiv = document.getElementById('ae-result');
         var calendlyDiv = document.getElementById('calendly-container');
         if (!resultDiv || !calendlyDiv) return;
         if (ae) {
-            resultDiv.innerHTML = '<div class="ae-info"><p><strong>Account Executive '+bundesland+':</strong> '+ae.name+'</p></div>';
+            resultDiv.innerHTML = '<div class="ae-info"><p><strong>Account Executive für PLZ '+plz+':</strong> '+ae.name+'</p></div>';
             if (ae.calendlyLink) {
                 calendlyDiv.innerHTML = '<div class="calendly-inline-widget" data-url="'+ae.calendlyLink+'?hide_gdpr_banner=1&hide_event_type_details=1&hide_landing_page_details=1&background_color=ffffff&hide_title=1" style="min-width:320px;height:700px;"></div>';
                 if (window.Calendly) {
@@ -361,7 +417,7 @@
                 calendlyDiv.innerHTML = '<div class="calendly-placeholder">Kein Kalenderlink verfügbar.</div>';
             }
         } else {
-            calendlyDiv.innerHTML = '<div class="calendly-placeholder">Bitte wählen Sie zuerst ein Bundesland aus.</div>';
+            calendlyDiv.innerHTML = '<div class="calendly-placeholder">Bitte geben Sie zuerst die Postleitzahl des Standorts ein, um den Kalender zu laden.</div>';
         }
     }
 
@@ -629,14 +685,22 @@
             if(f) { f.style.display='none'; f.style.opacity='0'; }
         },100);
 
-        // Bundesland-Auswahl
-        var sel = document.getElementById('bundesland-select');
-        if (sel) {
-            sel.addEventListener('change', function(){
-                var bl = this.value;
-                var hiddenField = document.getElementById('bundesland-hidden');
-                if (hiddenField) hiddenField.value = bl;
-                updateUI(aeMapping[bl], bl);
+        // PLZ-Eingabe (Schritt 1)
+        var plzInput = document.getElementById('plz-input');
+        if (plzInput) {
+            plzInput.addEventListener('input', function(){
+                var digits = this.value.replace(/\D/g, '').slice(0, 5);
+                if (this.value !== digits) this.value = digits;
+                handlePlzChange(digits);
+            });
+        }
+
+        // Manuelle Änderungen an der Formular-PLZ nicht mehr überschreiben
+        var formPlzField = document.querySelector('#contact-form input[name="plz"]');
+        if (formPlzField) {
+            formPlzField.addEventListener('input', function(){
+                this.dataset.userEdited = '1';
+                checkFormPlzMismatch();
             });
         }
 
