@@ -2,7 +2,11 @@
     // --- Konfiguration ---
     // Alle Schlüssel sind entfernt. Dein Worker ist jetzt der Mittelsmann.
     const PROXY_URL = 'https://gigagreen-calendly-proxy.eddie-esche.workers.dev';
-    
+    // Basis-URL dieses Scripts (für Nachladen von plz-bundesland.js, lokal wie auf GitHub Pages korrekt)
+    const SCRIPT_BASE = (document.currentScript && document.currentScript.src)
+        ? document.currentScript.src.replace(/[^/]*$/, '')
+        : 'https://klickstark-digital-act-gbr.github.io/gigagreen-plz-setter/';
+
     var prefixMapping = {};
     var currentPrefixShown = null;
 
@@ -346,6 +350,13 @@
         xhr.send();
     }
 
+    // AE-Info-Zeile inkl. aus der PLZ abgeleitetem Bundesland
+    function aeInfoHtml(ae, plz) {
+        var bl = window.resolveBundesland ? window.resolveBundesland(plz) : '';
+        var ort = bl ? plz + ' (' + bl + ')' : plz;
+        return '<div class="ae-info"><p><strong>Account Executive für PLZ ' + ort + ':</strong> ' + ae.name + '</p></div>';
+    }
+
     // Reaktion auf PLZ-Eingabe (Schritt 1)
     function handlePlzChange(digits) {
         var warning = document.getElementById('plz-warning');
@@ -377,7 +388,7 @@
             currentPrefixShown = prefix;
             updateUI(ae, digits);
         } else if (resultDiv) {
-            resultDiv.innerHTML = '<div class="ae-info"><p><strong>Account Executive für PLZ '+digits+':</strong> '+ae.name+'</p></div>';
+            resultDiv.innerHTML = aeInfoHtml(ae, digits);
         }
         checkFormPlzMismatch();
     }
@@ -404,7 +415,7 @@
         var calendlyDiv = document.getElementById('calendly-container');
         if (!resultDiv || !calendlyDiv) return;
         if (ae) {
-            resultDiv.innerHTML = '<div class="ae-info"><p><strong>Account Executive für PLZ '+plz+':</strong> '+ae.name+'</p></div>';
+            resultDiv.innerHTML = aeInfoHtml(ae, plz);
             if (ae.calendlyLink) {
                 calendlyDiv.innerHTML = '<div class="calendly-inline-widget" data-url="'+ae.calendlyLink+'?hide_gdpr_banner=1&hide_event_type_details=1&hide_landing_page_details=1&background_color=ffffff&hide_title=1" style="min-width:320px;height:700px;"></div>';
                 if (window.Calendly) {
@@ -716,6 +727,8 @@
                 showLoadingOverlay();
 
                 var data = Object.fromEntries(new FormData(e.target));
+                // Bundesland aus der finalen Formular-PLZ ableiten (fürs Zoho-Reporting und den Bundesland-Workflow)
+                data.bundesland = (window.resolveBundesland ? window.resolveBundesland(data.plz) : '') || '';
                 if (typeof data.gespraechsnotiz === 'string') {
                     data.gespraechsnotiz = data.gespraechsnotiz.replace(/\r\n|\r|\n/g, ' ').replace(/\s+/g, ' ').trim();
                 }
@@ -842,6 +855,12 @@
 
     // Abhängigkeiten laden
     function loadDependencies() {
+        // PLZ->Bundesland-Tabelle parallel laden (wird erst beim Submit/Anzeige gebraucht)
+        var blScript = document.createElement('script');
+        blScript.src = SCRIPT_BASE + 'plz-bundesland.js';
+        blScript.async = true;
+        document.head.appendChild(blScript);
+
         var papa = document.createElement('script');
         papa.src = 'https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js';
         papa.onload = function(){

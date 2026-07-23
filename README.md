@@ -30,6 +30,10 @@ Relevante Spalten ab v3 — eine Zeile pro AE:
 
 Regeln: Nur Zeilen mit `name` UND `plz_prefixes` zählen. Ungültige Tokens werden ignoriert, bei doppelten Prefixen gewinnt die erste Zeile (jeweils `console.warn`). Die Bundesland-Zeilen darüber sind Legacy (Script bis v2) und werden nach Go-Live 15.08.2026 entfernt.
 
+## Bundesland-Ableitung
+
+Das Bundesland wird nicht mehr ausgewählt, sondern beim Absenden aus der vollen 5-stelligen Formular-PLZ abgeleitet und als `bundesland` im Payload mitgeschickt (fürs Zoho-Reporting; Feldwerte identisch zum alten Dropdown). Quelle: `plz-bundesland.js` — kompakte Range-Tabelle (9.856 PLZs, 199 Ranges, 4,3 KB) generiert aus GeoNames-Daten (CC-BY 4.0) via `tools/build-plz-bundesland.py`. Unbekannte PLZ → leerer String. Grenzfälle (14xxx Berlin/Brandenburg, 97xxx Bayern/BW, 21xxx HH/NI usw.) sind PLZ-genau korrekt.
+
 **Gebietswechsel = nur `plz_prefixes`-Zellen im Sheet ändern.** Kein Deploy nötig. Die Zoho-Owner-Zuweisung (Deluge-Function `assign_owner_by_plz`) liest dieselbe CSV — Website und CRM bleiben automatisch synchron.
 
 ## Deploy
