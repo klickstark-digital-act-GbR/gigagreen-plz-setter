@@ -1,0 +1,192 @@
+// ============================================================================
+// assign_owner_by_plz  (Zoho CRM Deluge Custom Function, Kategorie: Automation)
+// ----------------------------------------------------------------------------
+// PLZ-basierte Owner-Zuweisung fuer Leads (GIGA.GREEN).
+// Single Source of Truth: dasselbe Config-Sheet wie die Buchungsseite,
+// ausgeliefert als CSV ueber den Cloudflare-Worker (/api/sheet-csv).
+// Relevante Spalten: name, plz_prefixes (Komma-Liste, zweistellig),
+// zoho_owner_id. Zuordnung ueber die ersten zwei Ziffern von
+// Standort_Postleitzahl.
+//
+// Argument:  leadId (String)  -> im Workflow verknuepfen mit ${Leads.Lead Id}
+// Rueckgabe: Status-String (erscheint im Workflow-/Funktions-Log)
+//
+// Verhalten:
+// - Keine gueltige 5-stellige PLZ            -> SKIP (keine Aenderung)
+// - Prefix nicht in Config / CSV-Fehler      -> Benachrichtigung an NOTIFY_EMAIL,
+//   optional Fallback-Zuweisung (FALLBACK_OWNER_ID, bis Klaerung leer)
+// - Owner bereits korrekt                    -> keine Aenderung (kein Re-Trigger)
+//
+// Hinweis CSV-Parsing: Zoho Deluge hat kein try/catch und toList() verwirft
+// leere Elemente. Deshalb: quote-aware Umbau ueber Segment-Split an '"',
+// Komma-Maskierung innerhalb von Anfuehrungszeichen und Padding leerer Zellen.
+// Escaped Quotes ("") kommen in den Daten nicht vor.
+// ============================================================================
+string automation.assign_owner_by_plz(String leadId)
+{
+    NOTIFY_EMAIL = "eddie.esche@klickstark.de";
+    FALLBACK_OWNER_ID = "";
+    CSV_URL = "https://gigagreen-calendly-proxy.eddie-esche.workers.dev/api/sheet-csv";
+    //
+    lead = zoho.crm.getRecordById("Leads", leadId.toLong());
+    plzRaw = ifnull(lead.get("Standort_Postleitzahl"), "").toString().trim();
+    plz = plzRaw.replaceAll("[^0-9]", "", true);
+    if(plz.length() != 5)
+    {
+        return "SKIP: keine gueltige 5-stellige PLZ ('" + plzRaw + "')";
+    }
+    prefix = plz.subString(0, 2);
+    //
+    // Config-CSV holen (detailed:true -> HTTP-Fehler abfangbar statt Abbruch)
+    resp = invokeurl
+    [
+        url : CSV_URL
+        type : GET
+        detailed : true
+    ];
+    if(resp.get("responseCode") != 200)
+    {
+        sendmail
+        [
+            from : zoho.adminuserid
+            to : NOTIFY_EMAIL
+            subject : "GIGA.GREEN PLZ-Zuweisung: Config-CSV nicht erreichbar"
+            message : "Lead " + leadId + " (PLZ " + plz + ") konnte nicht zugewiesen werden. HTTP " + resp.get("responseCode") + " beim Abruf der Config-CSV."
+        ]
+        return "FEHLER: CSV HTTP " + resp.get("responseCode");
+    }
+    csv = resp.get("responseText").toString();
+    //
+    // CSV zeilenweise parsen
+    ownerId = "";
+    ownerName = "";
+    idxPrefixes = -1;
+    idxOwnerId = -1;
+    idxName = -1;
+    lineNo = 0;
+    for each line in csv.toList("\n")
+    {
+        lineNo = lineNo + 1;
+        if(line.trim() == "")
+        {
+            continue;
+        }
+        // 1) Kommata innerhalb von Anfuehrungszeichen maskieren
+        rebuilt = "";
+        segNo = 0;
+        for each seg in line.toList("\"")
+        {
+            if(segNo % 2 == 1)
+            {
+                rebuilt = rebuilt + seg.replaceAll(",", "@@", true);
+            }
+            else
+            {
+                rebuilt = rebuilt + seg;
+            }
+            segNo = segNo + 1;
+        }
+        // 2) Leere Zellen padden, damit toList() nichts verschluckt
+        work = rebuilt.replaceAll(",,", ", ,", true);
+        work = work.replaceAll(",,", ", ,", true);
+        if(work.startsWith(","))
+        {
+            work = " " + work;
+        }
+        if(work.endsWith(","))
+        {
+            work = work + " ";
+        }
+        cells = work.toList(",");
+        //
+        if(lineNo == 1)
+        {
+            // Header: Spaltenindizes bestimmen
+            colNo = 0;
+            for each h in cells
+            {
+                hName = h.trim();
+                if(hName == "plz_prefixes")
+                {
+                    idxPrefixes = colNo;
+                }
+                if(hName == "zoho_owner_id")
+                {
+                    idxOwnerId = colNo;
+                }
+                if(hName == "name")
+                {
+                    idxName = colNo;
+                }
+                colNo = colNo + 1;
+            }
+            if(idxPrefixes < 0 || idxOwnerId < 0)
+            {
+                sendmail
+                [
+                    from : zoho.adminuserid
+                    to : NOTIFY_EMAIL
+                    subject : "GIGA.GREEN PLZ-Zuweisung: Config-CSV Spalten fehlen"
+                    message : "Spalten plz_prefixes/zoho_owner_id nicht im Header gefunden. Lead " + leadId + " (PLZ " + plz + ") nicht zugewiesen."
+                ]
+                return "FEHLER: Config-Spalten fehlen";
+            }
+            continue;
+        }
+        //
+        if(cells.size() <= idxOwnerId || cells.size() <= idxPrefixes)
+        {
+            continue;
+        }
+        prefixCell = cells.get(idxPrefixes).replaceAll("@@", ",", true).trim();
+        if(prefixCell == "")
+        {
+            continue;
+        }
+        for each tok in prefixCell.toList(",")
+        {
+            if(tok.trim() == prefix && ownerId == "")
+            {
+                ownerId = cells.get(idxOwnerId).trim();
+                if(idxName >= 0 && cells.size() > idxName)
+                {
+                    ownerName = cells.get(idxName).trim();
+                }
+            }
+        }
+    }
+    //
+    if(ownerId == "")
+    {
+        info "Kein Mapping fuer Prefix " + prefix;
+        sendmail
+        [
+            from : zoho.adminuserid
+            to : NOTIFY_EMAIL
+            subject : "GIGA.GREEN PLZ-Zuweisung: kein Gebiet fuer PLZ " + plz
+            message : "Lead " + leadId + " hat PLZ " + plz + " (Prefix " + prefix + "), fuer den kein Vertriebsgebiet in der Config hinterlegt ist. Bitte Config-Sheet pruefen."
+        ]
+        if(FALLBACK_OWNER_ID != "")
+        {
+            ownerId = FALLBACK_OWNER_ID;
+            ownerName = "Fallback";
+        }
+        else
+        {
+            return "KEIN MAPPING: Prefix " + prefix + " (nur Benachrichtigung)";
+        }
+    }
+    //
+    currentOwnerId = ifnull(ifnull(lead.get("Owner"), Map()).get("id"), "").toString();
+    if(currentOwnerId == ownerId)
+    {
+        return "OK: Owner bereits korrekt (" + ownerName + ")";
+    }
+    ownerMap = Map();
+    ownerMap.put("id", ownerId.toLong());
+    updateMap = Map();
+    updateMap.put("Owner", ownerMap);
+    updResp = zoho.crm.updateRecord("Leads", leadId.toLong(), updateMap);
+    info updResp;
+    return "OK: Owner gesetzt auf " + ownerName + " (" + ownerId + ") fuer PLZ " + plz;
+}
